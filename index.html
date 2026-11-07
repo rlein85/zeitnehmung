@@ -132,7 +132,8 @@ td.sub{color:var(--muted);font-size:14px}
         <label for="inUnit" style="flex:0 1 110px">Einheit<select id="inUnit"><option value="m">Meter</option><option value="km">Kilometer</option></select></label>
       </div>
       <div class="row">
-        <label for="inOff" style="flex:1 1 160px">Abweichung Runde 1 (Meter)<input id="inOff" inputmode="text" placeholder="0 · z. B. +200 oder −150"></label>
+        <label for="inOff" style="flex:1 1 160px">Abweichung (Meter)<input id="inOff" inputmode="text" placeholder="0 · z. B. +200 oder −150"></label>
+        <label for="inOffLap" style="flex:0 1 170px">gilt für<select id="inOffLap"><option value="first">Runde 1 (Start versetzt)</option><option value="last">letzte Runde (Ziel versetzt)</option></select></label>
       </div>
       <p class="hint" id="distHint"></p>
       <div class="seg" id="modeSeg">
@@ -221,7 +222,7 @@ td.sub{color:var(--muted);font-size:14px}
 /* ================= state ================= */
 const KEY='zeitnehmung.v2', AKEY='zeitnehmung.archive';
 const SAMPLE=[['Anna',34],['Bernd',41],['Clara',28],['David',52],['Eva',19],['Florian',37]];
-function fresh(){return{name:'',laps:1,dist:'',unit:'m',off:'',mode:'mass',sample:true,savedId:null,
+function fresh(){return{name:'',laps:1,dist:'',unit:'m',off:'',offLap:'first',mode:'mass',sample:true,savedId:null,
   runners:SAMPLE.map((x,i)=>({id:uid(),bib:String(i+1),name:x[0],age:String(x[1])})),startTs:null,endTs:null,taps:[]}}
 let S=load()||fresh();
 let tab=S.startTs?(S.endTs?'res':'race'):'setup', wake=null;
@@ -257,16 +258,18 @@ function fmtPace(ms,km){if(ms==null||!km)return'';const s=Math.round(ms/km/1000)
 const useSpeed=()=>{const k=lapKm();return k>0&&k<1};
 const rateName=()=>useSpeed()?'Tempo':'Pace', rateUnit=()=>useSpeed()?'km/h':'min/km';
 function fmtRate(ms,km){if(ms==null||!km||!ms)return'';return useSpeed()?(km/(ms/3.6e6)).toLocaleString('de-AT',{minimumFractionDigits:1,maximumFractionDigits:1}):fmtPace(ms,km)}
-/* Abweichung Runde 1 (in Metern, +/-): verlängert/verkürzt nur die erste Runde */
+/* Abweichung (in Metern, +/-): verlängert/verkürzt nur Runde 1 (Start versetzt) oder die letzte Runde (Ziel versetzt) */
 function offKm(){const v=parseFloat(String(S.off??'').replace(/\s/g,'').replace('−','-').replace(',','.'));
   if(!v||!lapKm())return 0;const o=v/1000;return lapKm()+o>0?o:0}
-const lapDistKm=k=>lapKm()+(k===0?offKm():0);
-const cumKm=k=>lapKm()*(k+1)+offKm();
+const offIdx=()=>S.offLap==='last'?Math.max(0,S.laps-1):0;
+const offName=()=>'R'+(offIdx()+1);
+const lapDistKm=k=>lapKm()+(k===offIdx()?offKm():0);
+const cumKm=k=>lapKm()*(k+1)+(k>=offIdx()?offKm():0);
 const totalKm=()=>lapKm()?lapKm()*S.laps+offKm():0;
 const cumDist=k=>distLabel(cumKm(k));
 /* "3 Runden à 7 km (R1 7,2 km) = 21,2 km" */
 function distSummary(){const km=lapKm();if(!km)return'';
-  return ` à ${distLabel(km)}${offKm()?' (R1 '+distLabel(lapDistKm(0))+')':''} = ${distLabel(totalKm())}`}
+  return ` à ${distLabel(km)}${offKm()?' ('+offName()+' '+distLabel(lapDistKm(offIdx()))+')':''} = ${distLabel(totalKm())}`}
 /* Rundenwert mit Einheit für Klammer-Anzeige: (16,7 km/h) bzw. (4m:49s) */
 const rateParen=(ms,km)=>{const v=fmtRate(ms,km);return v?'('+v+(useSpeed()?' km/h':'')+')':''};
 
@@ -278,10 +281,11 @@ $('inName').oninput=e=>{S.name=e.target.value;save();head()};
 $('inDist').oninput=e=>{S.dist=e.target.value;save();head();distHint()};
 $('inUnit').onchange=e=>{S.unit=e.target.value;save();head();distHint()};
 $('inOff').oninput=e=>{S.off=e.target.value;save();head();distHint()};
+$('inOffLap').onchange=e=>{S.offLap=e.target.value;save();head();distHint()};
 function distHint(){const k=lapKm();let t='Optional – für Pace-Berechnung (min/km).';
   if(k){const o=offKm(),bad=String(S.off??'').trim()&&!o&&parseFloat(String(S.off).replace('−','-').replace(',','.'));
-    t=`Gesamtdistanz: ${distLabel(totalKm())} (`+(o?`R1 ${distLabel(lapDistKm(0))}`+(S.laps>1?` + ${S.laps-1} × ${distLabel(k)}`:''):`${S.laps} × ${distLabel(k)}`)+`) · Auswertung in ${k<1?'km/h':'min/km'}`;
-    if(bad)t+=' · Abweichung ungültig (Runde 1 wäre ≤ 0)'}
+    t=`Gesamtdistanz: ${distLabel(totalKm())} (`+(o?(S.laps>1?(offIdx()?`${S.laps-1} × ${distLabel(k)} + ${offName()} ${distLabel(lapDistKm(offIdx()))}`:`R1 ${distLabel(lapDistKm(0))} + ${S.laps-1} × ${distLabel(k)}`):distLabel(lapDistKm(0))):`${S.laps} × ${distLabel(k)}`)+`) · Auswertung in ${k<1?'km/h':'min/km'}`;
+    if(bad)t+=' · Abweichung ungültig (Runde wäre ≤ 0)'}
   $('distHint').textContent=t}
 $('inLaps').oninput=e=>{const v=parseInt(e.target.value);if(v>=1){S.laps=v;save();head()}distHint()};
 document.querySelectorAll('#modeSeg button').forEach(b=>b.onclick=()=>{if(S.startTs)return;S.mode=b.dataset.mode;save();renderSetup();head()});
@@ -294,7 +298,7 @@ function problems(){
   return dup;
 }
 function renderSetup(){
-  $('inName').value=S.name;$('inLaps').value=S.laps;$('inDist').value=S.dist??'';$('inOff').value=S.off??'';$('inUnit').value=S.unit||'m';distHint();$('sampleTag').hidden=!S.sample;
+  $('inName').value=S.name;$('inLaps').value=S.laps;$('inDist').value=S.dist??'';$('inOff').value=S.off??'';$('inOffLap').value=S.offLap||'first';$('inUnit').value=S.unit||'m';distHint();$('sampleTag').hidden=!S.sample;
   const locked=!!S.startTs;$('inLaps').disabled=locked;
   document.querySelectorAll('#modeSeg button').forEach(b=>{b.setAttribute('aria-pressed',b.dataset.mode===S.mode);b.disabled=locked});
   $('modeHint').textContent=S.mode==='mass'
@@ -604,7 +608,7 @@ $('saveRace').onclick=()=>{
 $('saveList').onclick=()=>{
   if(!S.runners.length){toast('Liste ist leer');return}
   const runners=S.runners.map(({bib,name,age})=>({bib,name,age}));
-  ask('Starterliste speichern als:',t=>saveTo('list',cleanTitle(t,'Starterliste'),JSON.stringify({runners,mode:S.mode,laps:S.laps,dist:S.dist,unit:S.unit,off:S.off,name:S.name},null,1)),S.name?`Starter ${S.name}`:'Starterliste');
+  ask('Starterliste speichern als:',t=>saveTo('list',cleanTitle(t,'Starterliste'),JSON.stringify({runners,mode:S.mode,laps:S.laps,dist:S.dist,unit:S.unit,off:S.off,offLap:S.offLap,name:S.name},null,1)),S.name?`Starter ${S.name}`:'Starterliste');
 };
 $('loadList').onclick=()=>{tab='arch';render()};
 async function renderArch(){
@@ -625,7 +629,7 @@ function loadItem(x){
   const go=async()=>{toast('Lädt …');let p;
     try{p=JSON.parse(await store.get(x))}catch(e){toast(e?.code?errMsg(e):'Datei konnte nicht gelesen werden');return}
     if(x.kind==='race'){S={...fresh(),...p,sample:false};tab='res'}
-    else{S={...fresh(),name:p.name||'',mode:p.mode||'mass',laps:p.laps||1,dist:p.dist??'',unit:p.unit||'m',off:p.off??'',sample:false,runners:(p.runners||[]).map(r=>({id:uid(),bib:String(r.bib??''),name:r.name||'',age:String(r.age??'')}))};tab='setup'}
+    else{S={...fresh(),name:p.name||'',mode:p.mode||'mass',laps:p.laps||1,dist:p.dist??'',unit:p.unit||'m',off:p.off??'',offLap:p.offLap||'first',sample:false,runners:(p.runners||[]).map(r=>({id:uid(),bib:String(r.bib??''),name:r.name||'',age:String(r.age??'')}))};tab='setup'}
     save();$('shotPanel').hidden=true;render();toast('Geladen')};
   if(S.startTs&&!S.endTs)ask('Ein Rennen läuft gerade. Trotzdem laden? Die laufenden Zeiten gehen verloren.',go);else go();
 }
