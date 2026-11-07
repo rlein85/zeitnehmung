@@ -131,6 +131,9 @@ td.sub{color:var(--muted);font-size:14px}
         <label for="inDist" style="flex:1 1 160px">Distanz pro Runde<input id="inDist" inputmode="decimal" placeholder="z. B. 400"></label>
         <label for="inUnit" style="flex:0 1 110px">Einheit<select id="inUnit"><option value="m">Meter</option><option value="km">Kilometer</option></select></label>
       </div>
+      <div class="row">
+        <label for="inOff" style="flex:1 1 160px">Abweichung Runde 1 (Meter)<input id="inOff" inputmode="text" placeholder="0 · z. B. +200 oder −150"></label>
+      </div>
       <p class="hint" id="distHint"></p>
       <div class="seg" id="modeSeg">
         <button id="m-mass" data-mode="mass" aria-pressed="true">Massenstart<small>Alle starten gemeinsam</small></button>
@@ -218,7 +221,7 @@ td.sub{color:var(--muted);font-size:14px}
 /* ================= state ================= */
 const KEY='zeitnehmung.v2', AKEY='zeitnehmung.archive';
 const SAMPLE=[['Anna',34],['Bernd',41],['Clara',28],['David',52],['Eva',19],['Florian',37]];
-function fresh(){return{name:'',laps:1,dist:'',unit:'m',mode:'mass',sample:true,savedId:null,
+function fresh(){return{name:'',laps:1,dist:'',unit:'m',off:'',mode:'mass',sample:true,savedId:null,
   runners:SAMPLE.map((x,i)=>({id:uid(),bib:String(i+1),name:x[0],age:String(x[1])})),startTs:null,endTs:null,taps:[]}}
 let S=load()||fresh();
 let tab=S.startTs?(S.endTs?'res':'race'):'setup', wake=null;
@@ -254,7 +257,16 @@ function fmtPace(ms,km){if(ms==null||!km)return'';const s=Math.round(ms/km/1000)
 const useSpeed=()=>{const k=lapKm();return k>0&&k<1};
 const rateName=()=>useSpeed()?'Tempo':'Pace', rateUnit=()=>useSpeed()?'km/h':'min/km';
 function fmtRate(ms,km){if(ms==null||!km||!ms)return'';return useSpeed()?(km/(ms/3.6e6)).toLocaleString('de-AT',{minimumFractionDigits:1,maximumFractionDigits:1}):fmtPace(ms,km)}
-const cumDist=k=>distLabel(lapKm()*(k+1));
+/* Abweichung Runde 1 (in Metern, +/-): verlängert/verkürzt nur die erste Runde */
+function offKm(){const v=parseFloat(String(S.off??'').replace(/\s/g,'').replace('−','-').replace(',','.'));
+  if(!v||!lapKm())return 0;const o=v/1000;return lapKm()+o>0?o:0}
+const lapDistKm=k=>lapKm()+(k===0?offKm():0);
+const cumKm=k=>lapKm()*(k+1)+offKm();
+const totalKm=()=>lapKm()?lapKm()*S.laps+offKm():0;
+const cumDist=k=>distLabel(cumKm(k));
+/* "3 Runden à 7 km (R1 7,2 km) = 21,2 km" */
+function distSummary(){const km=lapKm();if(!km)return'';
+  return ` à ${distLabel(km)}${offKm()?' (R1 '+distLabel(lapDistKm(0))+')':''} = ${distLabel(totalKm())}`}
 /* Rundenwert mit Einheit für Klammer-Anzeige: (16,7 km/h) bzw. (4m:49s) */
 const rateParen=(ms,km)=>{const v=fmtRate(ms,km);return v?'('+v+(useSpeed()?' km/h':'')+')':''};
 
@@ -265,7 +277,12 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.
 $('inName').oninput=e=>{S.name=e.target.value;save();head()};
 $('inDist').oninput=e=>{S.dist=e.target.value;save();head();distHint()};
 $('inUnit').onchange=e=>{S.unit=e.target.value;save();head();distHint()};
-function distHint(){const k=lapKm();$('distHint').textContent=k?`Gesamtdistanz: ${distLabel(k*S.laps)} (${S.laps} × ${distLabel(k)}) · Auswertung in ${k<1?'km/h':'min/km'}`:'Optional – für Pace-Berechnung (min/km).'}
+$('inOff').oninput=e=>{S.off=e.target.value;save();head();distHint()};
+function distHint(){const k=lapKm();let t='Optional – für Pace-Berechnung (min/km).';
+  if(k){const o=offKm(),bad=String(S.off??'').trim()&&!o&&parseFloat(String(S.off).replace('−','-').replace(',','.'));
+    t=`Gesamtdistanz: ${distLabel(totalKm())} (`+(o?`R1 ${distLabel(lapDistKm(0))}`+(S.laps>1?` + ${S.laps-1} × ${distLabel(k)}`:''):`${S.laps} × ${distLabel(k)}`)+`) · Auswertung in ${k<1?'km/h':'min/km'}`;
+    if(bad)t+=' · Abweichung ungültig (Runde 1 wäre ≤ 0)'}
+  $('distHint').textContent=t}
 $('inLaps').oninput=e=>{const v=parseInt(e.target.value);if(v>=1){S.laps=v;save();head()}distHint()};
 document.querySelectorAll('#modeSeg button').forEach(b=>b.onclick=()=>{if(S.startTs)return;S.mode=b.dataset.mode;save();renderSetup();head()});
 $('addRunner').onclick=()=>{const nums=S.runners.map(r=>parseInt(r.bib)).filter(n=>!isNaN(n));
@@ -277,7 +294,7 @@ function problems(){
   return dup;
 }
 function renderSetup(){
-  $('inName').value=S.name;$('inLaps').value=S.laps;$('inDist').value=S.dist??'';$('inUnit').value=S.unit||'m';distHint();$('sampleTag').hidden=!S.sample;
+  $('inName').value=S.name;$('inLaps').value=S.laps;$('inDist').value=S.dist??'';$('inOff').value=S.off??'';$('inUnit').value=S.unit||'m';distHint();$('sampleTag').hidden=!S.sample;
   const locked=!!S.startTs;$('inLaps').disabled=locked;
   document.querySelectorAll('#modeSeg button').forEach(b=>{b.setAttribute('aria-pressed',b.dataset.mode===S.mode);b.disabled=locked});
   $('modeHint').textContent=S.mode==='mass'
@@ -366,8 +383,8 @@ function renderRes(){
   $('resTable').innerHTML=`<tr><th>Pl.</th><th>Nr.</th><th>Name</th><th>Alter</th>${indiv?'<th>Start</th>':''}${lapHead}<th>Zeit</th><th>Rückstand</th>${P?`<th>${rateName()}<span class="l2">${rateUnit()}</span></th>`:''}</tr>`+
     R.map(x=>`<tr><td class="rank">${x.rank??''}</td><td>${esc(x.r.bib)}</td><td>${esc(x.r.name)}</td><td>${esc(x.r.age)}</td>
     ${indiv?`<td class="sub">${x.start?clockTime(x.start):''}</td>`:''}
-    ${L?Array.from({length:S.laps},(_,k)=>`<td>${x.splits[k]!=null?`<b>${fmt(x.splits[k])}</b>${P?' <b>'+rateParen(x.splits[k],km)+'</b>':''}<span class="l2">Σ ${fmt(x.cum[k])}</span>`:''}</td>`).join(''):''}
-    <td class="t">${x.time!=null?fmt(x.time):x.status}</td><td class="sub">${x.gap!=null?'+'+fmt(x.gap):''}</td>${P?`<td class="sub">${fmtRate(x.time,km*S.laps)}</td>`:''}</tr>`).join('');
+    ${L?Array.from({length:S.laps},(_,k)=>`<td>${x.splits[k]!=null?`<b>${fmt(x.splits[k])}</b>${P?' <b>'+rateParen(x.splits[k],lapDistKm(k))+'</b>':''}<span class="l2">Σ ${fmt(x.cum[k])}</span>`:''}</td>`).join(''):''}
+    <td class="t">${x.time!=null?fmt(x.time):x.status}</td><td class="sub">${x.gap!=null?'+'+fmt(x.gap):''}</td>${P?`<td class="sub">${fmtRate(x.time,totalKm())}</td>`:''}</tr>`).join('');
   $('dlPng').textContent=S.laps>3?'Ergebnisbilder':'Ergebnisbild';
 }
 const slug=s=>(s||'Laufevent').replace(/[^\p{L}\p{N}]+/gu,'_').replace(/^_|_$/g,'');
@@ -391,12 +408,12 @@ $('dlXlsx').onclick=()=>{
   head.push('Rückstand');fmts[head.length-1]=TF;head.push('Status');if(indiv)head.push('Startzeit');
   if(L)for(let k=0;k<S.laps;k++){head.push('Runde '+(k+1));fmts[head.length-1]=TF;head.push('Σ nach R'+(k+1)+(P?' ('+cumDist(k)+')':''));fmts[head.length-1]=TF;
     if(P){head.push(rateName()+' R'+(k+1)+' ('+rateUnit()+')');fmts[head.length-1]=RF}}
-  const sub=`${dateStr(S.startTs)} · ${modeName()} · ${S.laps} ${S.laps>1?'Runden':'Runde'}`+(P?` à ${distLabel(km)} = ${distLabel(km*S.laps)}`:'');
+  const sub=`${dateStr(S.startTs)} · ${modeName()} · ${S.laps} ${S.laps>1?'Runden':'Runde'}`+(P?distSummary():'');
   const aoa=[[S.name||'Laufevent'],[sub],[],head];
   const t=v=>v!=null?v/D:'',pc=(ms,d)=>ms!=null&&ms>0&&d?(SP?d/(ms/3.6e6):ms/d/D):'';
   R.forEach(x=>{const row=[x.rank??'',isNaN(+x.r.bib)?x.r.bib:+x.r.bib,x.r.name,x.r.age===''?'':(+x.r.age||x.r.age),t(x.time)];
-    if(P)row.push(pc(x.time,km*S.laps));row.push(t(x.gap),x.status);if(indiv)row.push(x.start?clockTime(x.start):'');
-    if(L)for(let k=0;k<S.laps;k++){row.push(t(x.splits[k]),t(x.cum[k]));if(P)row.push(pc(x.splits[k],km))}
+    if(P)row.push(pc(x.time,totalKm()));row.push(t(x.gap),x.status);if(indiv)row.push(x.start?clockTime(x.start):'');
+    if(L)for(let k=0;k<S.laps;k++){row.push(t(x.splits[k]),t(x.cum[k]));if(P)row.push(pc(x.splits[k],lapDistKm(k)))}
     aoa.push(row)});
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   for(let r=4;r<aoa.length;r++)fmts.forEach((z,c)=>{if(!z)return;const a=XLSX.utils.encode_cell({r,c});if(ws[a]&&ws[a].t==='n')ws[a].z=z});
@@ -436,7 +453,7 @@ async function drawImage(kind){
   g.textBaseline='alphabetic';g.textAlign='left';g.fillStyle=C.fg;g.font=`800 76px ${DF}`;
   fitText(g,(S.name||'Laufevent').toUpperCase()+(kind==='laps'?' · RUNDENZEITEN':''),Pd,120,W-2*Pd);
   g.fillStyle=C.mu;g.font=`500 30px ${BF}`;
-  const parts=[dateStr(S.startTs),modeName(),`${S.laps} ${L?'Runden':'Runde'}${P?' à '+distLabel(km)+' = '+distLabel(km*S.laps):''}`,`${R.filter(r=>r.time!=null).length}/${R.length} im Ziel`];
+  const parts=[dateStr(S.startTs),modeName(),`${S.laps} ${L?'Runden':'Runde'}${P?distSummary():''}`,`${R.filter(r=>r.time!=null).length}/${R.length} im Ziel`];
   fitText(g,parts.join('  ·  '),Pd,170,W-2*Pd);
   if(withLaps){g.font=`500 24px ${BF}`;g.fillText(`Runden: Rundenzeit${P?' ('+rateName()+')':''} · darunter Σ Gesamtzeit · Kopfzeile: Σ Distanz`,Pd,212)}
   else if(P){g.font=`500 24px ${BF}`;g.fillText(`${rateName()} in ${rateUnit()}`,Pd,212)}
@@ -452,11 +469,11 @@ async function drawImage(kind){
       else if(k==='name'){g.fillStyle=C.fg;g.font=`600 32px ${BF}`;fitText(g,r.r.name||'',cl.x,by,cl.w-20)}
       else if(k==='age'){g.fillStyle=C.mu;g.font=`500 30px ${BF}`;g.fillText(r.r.age||'',cl.x,by)}
       else if(k==='time'){g.fillStyle=C.fg;g.font=`700 42px ${DF}`;g.fillText(r.time!=null?fmt(r.time):r.status,cl.x,by)}
-      else if(k==='pace'){g.fillStyle=C.mu;g.font=`600 32px ${DF}`;g.fillText(fmtRate(r.time,km*S.laps),cl.x,by)}
+      else if(k==='pace'){g.fillStyle=C.mu;g.font=`600 32px ${DF}`;g.fillText(fmtRate(r.time,totalKm()),cl.x,by)}
       else if(k==='gap'){g.fillStyle=C.mu;g.font=`600 32px ${DF}`;g.fillText(r.gap!=null?'+'+fmt(r.gap):'',cl.x,by)}
       else{const n=+k.slice(3);if(r.splits[n]==null)return;
         const t=fmt(r.splits[n]);g.textAlign='left';g.fillStyle=C.fg;g.font=`700 36px ${DF}`;g.fillText(t,cl.x,by);
-        if(P){const w=g.measureText(t).width;g.font=`700 28px ${DF}`;g.fillText(rateParen(r.splits[n],km),cl.x+w+10,by)}
+        if(P){const w=g.measureText(t).width;g.font=`700 28px ${DF}`;g.fillText(rateParen(r.splits[n],lapDistKm(n)),cl.x+w+10,by)}
         g.fillStyle=C.mu;g.font=`600 24px ${DF}`;g.fillText('Σ '+fmt(r.cum[n]),cl.x,by+32)}
     });
     y+=rowH;
@@ -587,7 +604,7 @@ $('saveRace').onclick=()=>{
 $('saveList').onclick=()=>{
   if(!S.runners.length){toast('Liste ist leer');return}
   const runners=S.runners.map(({bib,name,age})=>({bib,name,age}));
-  ask('Starterliste speichern als:',t=>saveTo('list',cleanTitle(t,'Starterliste'),JSON.stringify({runners,mode:S.mode,laps:S.laps,dist:S.dist,unit:S.unit,name:S.name},null,1)),S.name?`Starter ${S.name}`:'Starterliste');
+  ask('Starterliste speichern als:',t=>saveTo('list',cleanTitle(t,'Starterliste'),JSON.stringify({runners,mode:S.mode,laps:S.laps,dist:S.dist,unit:S.unit,off:S.off,name:S.name},null,1)),S.name?`Starter ${S.name}`:'Starterliste');
 };
 $('loadList').onclick=()=>{tab='arch';render()};
 async function renderArch(){
@@ -608,7 +625,7 @@ function loadItem(x){
   const go=async()=>{toast('Lädt …');let p;
     try{p=JSON.parse(await store.get(x))}catch(e){toast(e?.code?errMsg(e):'Datei konnte nicht gelesen werden');return}
     if(x.kind==='race'){S={...fresh(),...p,sample:false};tab='res'}
-    else{S={...fresh(),name:p.name||'',mode:p.mode||'mass',laps:p.laps||1,dist:p.dist??'',unit:p.unit||'m',sample:false,runners:(p.runners||[]).map(r=>({id:uid(),bib:String(r.bib??''),name:r.name||'',age:String(r.age??'')}))};tab='setup'}
+    else{S={...fresh(),name:p.name||'',mode:p.mode||'mass',laps:p.laps||1,dist:p.dist??'',unit:p.unit||'m',off:p.off??'',sample:false,runners:(p.runners||[]).map(r=>({id:uid(),bib:String(r.bib??''),name:r.name||'',age:String(r.age??'')}))};tab='setup'}
     save();$('shotPanel').hidden=true;render();toast('Geladen')};
   if(S.startTs&&!S.endTs)ask('Ein Rennen läuft gerade. Trotzdem laden? Die laufenden Zeiten gehen verloren.',go);else go();
 }
@@ -616,7 +633,7 @@ function loadItem(x){
 /* ================= clock & render ================= */
 function head(){$('evName').textContent=S.name||'Laufevent';
   const n=S.runners.length,done=S.runners.filter(r=>finishOf(r)!=null).length,run=S.runners.filter(r=>stateOf(r)==='running').length;
-  $('status').textContent=!S.startTs?`Bereit · ${modeName()} · ${n} Läufer · ${S.laps} ${S.laps>1?'Runden':'Runde'}${lapKm()?' · '+distLabel(lapKm()*S.laps):''}`:
+  $('status').textContent=!S.startTs?`Bereit · ${modeName()} · ${n} Läufer · ${S.laps} ${S.laps>1?'Runden':'Runde'}${lapKm()?' · '+distLabel(totalKm()):''}`:
     S.endTs?`Beendet · ${done}/${n} im Ziel`:`Läuft · ${run} unterwegs · ${done}/${n} im Ziel`}
 let lastMeta=0;
 function tick(now){const el=$('clock');const ms=S.startTs?((S.endTs||Date.now())-S.startTs):0;const s=fmt(ms),i=s.lastIndexOf('.');
